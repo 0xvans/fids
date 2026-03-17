@@ -230,9 +230,7 @@ export function HomepageClient({ listings: initialListings }: Props) {
           <p className="text-sm sm:text-base text-muted-foreground max-w-sm mx-auto mb-6">
             Every FID. Fixed price, offers, and auctions — all on-chain.
           </p>
-          {!authenticated && (
-            <button onClick={() => login()} className="btn-primary px-7 py-3">Connect Wallet</button>
-          )}
+
         </section>
 
         {/* Stats */}
