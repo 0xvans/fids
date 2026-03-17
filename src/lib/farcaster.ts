@@ -53,8 +53,14 @@ const DATA_TYPE_MAP: Record<string, keyof FarcasterProfile> = {
 // Fetch from Warpcast API — primary source (works for all FIDs including new ones)
 async function fetchFromWarpcast(fid: number): Promise<FarcasterProfile | null> {
   try {
-    const res = await fetch(`${WARPCAST_API}/user?fid=${fid}`, {
+    // Use proxy API route to avoid CORS issues in browser
+    const isServer = typeof window === 'undefined'
+    const url = isServer
+      ? `https://api.warpcast.com/v2/user?fid=${fid}`
+      : `/api/warpcast?fid=${fid}`
+    const res = await fetch(url, {
       cache: 'no-store',
+      headers: isServer ? { 'Accept': 'application/json' } : {},
     })
     if (!res.ok) return null
     const data = await res.json()
@@ -110,25 +116,46 @@ async function fetchFromHub(fid: number): Promise<FarcasterProfile | null> {
 }
 
 async function fetchStatsRaw(fid: number): Promise<FidStats> {
-  // Try Warpcast with retry
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(`${WARPCAST_API}/user?fid=${fid}`, { cache: 'no-store' })
-      if (res.status === 429) {
-        // Rate limited — wait and retry
-        await sleep(500 * (attempt + 1))
-        continue
+  // 1. Try Warpcast API first — most accurate
+  try {
+    const res = await fetch(
+      `${WARPCAST_API}/user?fid=${fid}`,
+      { cache: 'no-store', headers: { 'Accept': 'application/json' } }
+    )
+    if (res.ok) {
+      const data = await res.json()
+      const user = data?.result?.user
+      if (user && (user.followerCount > 0 || user.followingCount > 0)) {
+        return {
+          followerCount: user.followerCount ?? 0,
+          followingCount: user.followingCount ?? 0,
+        }
       }
+    }
+  } catch {}
+
+  // 2. Fallback: Warpcast v2 user-by-username endpoint
+  try {
+    // First get username from profile cache
+    const cached = profileFromCache(fid)
+    if (cached?.username) {
+      const res = await fetch(
+        `${WARPCAST_API}/user-by-username?username=${cached.username}`,
+        { cache: 'no-store', headers: { 'Accept': 'application/json' } }
+      )
       if (res.ok) {
         const data = await res.json()
         const user = data?.result?.user
-        if (user) return { followerCount: user.followerCount ?? 0, followingCount: user.followingCount ?? 0 }
+        if (user) {
+          return {
+            followerCount: user.followerCount ?? 0,
+            followingCount: user.followingCount ?? 0,
+          }
+        }
       }
-      break
-    } catch {
-      if (attempt < 2) await sleep(300 * (attempt + 1))
     }
-  }
+  } catch {}
+
   return { followerCount: 0, followingCount: 0 }
 }
 
@@ -233,10 +260,11 @@ export async function searchFids(query: string): Promise<FarcasterProfile[]> {
 
   // 1. Warpcast search — partial match
   try {
-    const res = await fetch(
-      `${WARPCAST_API}/user-search?q=${encodeURIComponent(username)}&limit=5`,
-      { cache: 'no-store' }
-    )
+    const isServer = typeof window === 'undefined'
+    const searchUrl = isServer
+      ? `${WARPCAST_API}/user-search?q=${encodeURIComponent(username)}&limit=5`
+      : `/api/warpcast-search?q=${encodeURIComponent(username)}&limit=5`
+    const res = await fetch(searchUrl, { cache: 'no-store' })
     if (res.ok) {
       const data = await res.json()
       const users = data?.result?.users ?? []
