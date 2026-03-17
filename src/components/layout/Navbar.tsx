@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { usePrivy } from '@privy-io/react-auth'
@@ -83,24 +83,12 @@ export function Navbar() {
             {/* Right */}
             <div className="flex items-center gap-2">
               {authenticated && address ? (
-                <>
-                  <Link href="/profile"
-                    className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-1.5 hover:border-primary/30 hover:bg-muted transition-all">
-                    <img
-                      src={profile?.pfpUrl || DEFAULT_PFP}
-                      alt=""
-                      className="h-6 w-6 rounded-full object-cover ring-1 ring-primary/20"
-                      onError={e => { (e.target as HTMLImageElement).src = DEFAULT_PFP }}
-                    />
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {profile?.username ? `@${profile.username}` : truncateAddress(address)}
-                    </span>
-                    {fidNum > 0 && <span className="fid-num text-[10px]">#{fidNum}</span>}
-                  </Link>
-                  <button onClick={() => logout()} className="btn-ghost text-xs px-3 py-1.5">
-                    Disconnect
-                  </button>
-                </>
+  <ProfileDropdown
+                    address={address}
+                    profile={profile}
+                    fidNum={fidNum}
+                    onLogout={logout}
+                  />
               ) : (
                 <button onClick={() => login()} className="btn-primary text-xs px-4 py-2">
                   Connect Wallet
@@ -202,5 +190,110 @@ function IconSearch() {
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
       <circle cx="9" cy="9" r="5.5"/><path d="M16 16l-3-3"/>
     </svg>
+  )
+}
+
+// ─── Profile Dropdown ─────────────────────────────────────────────────────────
+function ProfileDropdown({ address, profile, fidNum, onLogout }: {
+  address: string
+  profile: any
+  fidNum: number
+  onLogout: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div className="relative" ref={ref}>
+      {/* Avatar button */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="relative flex items-center justify-center rounded-full ring-2 ring-border hover:ring-primary/40 transition-all"
+      >
+        <img
+          src={profile?.pfpUrl || DEFAULT_PFP}
+          alt=""
+          className="h-8 w-8 rounded-full object-cover"
+          onError={e => { (e.target as HTMLImageElement).src = DEFAULT_PFP }}
+        />
+        {fidNum > 0 && (
+          <span className="absolute -bottom-1 -right-1 h-3.5 w-3.5 rounded-full bg-green-500 border-2 border-background" />
+        )}
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-52 animate-slide-down z-50">
+          <div className="glass rounded-2xl border border-border overflow-hidden shadow-xl">
+            {/* Profile info */}
+            <div className="px-4 py-3 border-b border-border">
+              <div className="flex items-center gap-3">
+                <img
+                  src={profile?.pfpUrl || DEFAULT_PFP}
+                  alt=""
+                  className="h-9 w-9 rounded-full object-cover shrink-0"
+                  onError={e => { (e.target as HTMLImageElement).src = DEFAULT_PFP }}
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {profile?.displayName || truncateAddress(address)}
+                  </p>
+                  {profile?.username && (
+                    <p className="text-xs text-muted-foreground truncate">@{profile.username}</p>
+                  )}
+                  {fidNum > 0 && (
+                    <p className="fid-num text-xs mt-0.5">#{fidNum.toLocaleString()}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="p-1.5 space-y-0.5">
+              <Link
+                href="/profile"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm hover:bg-muted/60 transition-colors w-full"
+              >
+                <svg className="h-4 w-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                Profile
+              </Link>
+              {fidNum > 0 && (
+                <Link
+                  href={`/fid/${fidNum}`}
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm hover:bg-muted/60 transition-colors w-full"
+                >
+                  <svg className="h-4 w-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a2 2 0 012-2z" />
+                  </svg>
+                  My FID #{fidNum}
+                </Link>
+              )}
+              <button
+                onClick={() => { onLogout(); setOpen(false) }}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-red-400 hover:bg-red-500/10 transition-colors w-full"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Disconnect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
