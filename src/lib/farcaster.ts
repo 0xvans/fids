@@ -110,15 +110,25 @@ async function fetchFromHub(fid: number): Promise<FarcasterProfile | null> {
 }
 
 async function fetchStatsRaw(fid: number): Promise<FidStats> {
-  // Warpcast — most accurate
-  try {
-    const res = await fetch(`${WARPCAST_API}/user?fid=${fid}`, { cache: 'no-store' })
-    if (res.ok) {
-      const data = await res.json()
-      const user = data?.result?.user
-      if (user) return { followerCount: user.followerCount ?? 0, followingCount: user.followingCount ?? 0 }
+  // Try Warpcast with retry
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${WARPCAST_API}/user?fid=${fid}`, { cache: 'no-store' })
+      if (res.status === 429) {
+        // Rate limited — wait and retry
+        await sleep(500 * (attempt + 1))
+        continue
+      }
+      if (res.ok) {
+        const data = await res.json()
+        const user = data?.result?.user
+        if (user) return { followerCount: user.followerCount ?? 0, followingCount: user.followingCount ?? 0 }
+      }
+      break
+    } catch {
+      if (attempt < 2) await sleep(300 * (attempt + 1))
     }
-  } catch {}
+  }
   return { followerCount: 0, followingCount: 0 }
 }
 
@@ -191,7 +201,7 @@ export async function fetchProfilesBatch(
   if (toFetch.length === 0) return result
 
   // Fetch missing in parallel, max 6 at a time
-  const CHUNK = 6
+  const CHUNK = 3
   for (let i = 0; i < toFetch.length; i += CHUNK) {
     const chunk = toFetch.slice(i, i + CHUNK)
     await Promise.all(chunk.map(async fid => {
