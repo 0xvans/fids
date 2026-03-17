@@ -116,16 +116,20 @@ async function fetchFromHub(fid: number): Promise<FarcasterProfile | null> {
 }
 
 async function fetchStatsRaw(fid: number): Promise<FidStats> {
-  // 1. Try Warpcast API first — most accurate
+  // 1. Try Warpcast API — use proxy on client to avoid CORS
   try {
-    const res = await fetch(
-      `${WARPCAST_API}/user?fid=${fid}`,
-      { cache: 'no-store', headers: { 'Accept': 'application/json' } }
-    )
+    const isServer = typeof window === 'undefined'
+    const url = isServer
+      ? `${WARPCAST_API}/user?fid=${fid}`
+      : `/api/warpcast?fid=${fid}`
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: isServer ? { 'Accept': 'application/json' } : {},
+    })
     if (res.ok) {
       const data = await res.json()
       const user = data?.result?.user
-      if (user && (user.followerCount > 0 || user.followingCount > 0)) {
+      if (user) {
         return {
           followerCount: user.followerCount ?? 0,
           followingCount: user.followingCount ?? 0,
