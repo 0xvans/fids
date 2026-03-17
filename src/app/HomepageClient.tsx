@@ -17,7 +17,6 @@ type FilterType = 'all' | 'fixed' | 'auction'
 type SortType = 'newest' | 'price_asc' | 'price_desc' | 'fid_asc'
 type BrowseProfile = FarcasterProfile & Partial<FidStats>
 
-// Combined history item
 type HistoryItem =
   | { kind: 'tx';      data: Transaction; ts: number }
   | { kind: 'listing'; data: Listing & { profile: FarcasterProfile | null }; ts: number }
@@ -46,52 +45,64 @@ export function HomepageClient({ listings: initialListings }: Props) {
   const [searchLoading, setSearchLoading] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
 
-  const [listings, setListings]       = useState(initialListings)
-  const [exploreFids, setExploreFids] = useState<number[]>([])
-  const [exploreMap, setExploreMap]   = useState<Map<number, BrowseProfile | null>>(new Map())
+  const [listings, setListings]         = useState(initialListings)
+  const [exploreFids, setExploreFids]   = useState<number[]>([])
+  const [exploreMap, setExploreMap]     = useState<Map<number, BrowseProfile | null>>(new Map())
   const [exploreLoading, setExploreLoading] = useState(false)
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
   const exploreIntervalRef = useRef<ReturnType<typeof setInterval>>()
 
-  // ── Fetch active listings ──────────────────────────────────────────────────
+  // ── Fetch active listings with profiles + stats ────────────────────────────
   const fetchListings = useCallback(async () => {
     const raw = await getActiveListings(48)
     const fids = raw.map(l => l.fid)
     const profileMap = await fetchProfilesBatch(fids)
     const statsResults = await Promise.allSettled(fids.map(fid => fetchFidStats(fid)))
     const enriched = raw.map((l, i) => {
-      const profile = profileMap.get(l.fid) ?? null
-      const stats = statsResults[i].status === 'fulfilled' ? statsResults[i].value : { followerCount: 0, followingCount: 0 }
-      return { ...l, profile: profile ? { ...profile, ...stats } : null }
+      const p = profileMap.get(l.fid) ?? null
+      const s = statsResults[i].status === 'fulfilled'
+        ? statsResults[i].value
+        : { followerCount: 0, followingCount: 0 }
+      return { ...l, profile: p ? { ...p, ...s } : null }
     })
     setListings(enriched)
   }, [])
-
-
 
   // ── Build combined history ─────────────────────────────────────────────────
   const buildHistory = useCallback(async () => {
     setHistoryLoading(true)
     try {
-      // Fetch txs and listings in parallel
       const [txs, lstRes] = await Promise.all([
         getRecentTransactions(50),
-        supabase.from('listings').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase
+          .from('listings')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100),
       ])
 
-      const lsts = lstRes.data ?? []
+      const lsts: any[] = lstRes.data ?? []
 
-      // Batch fetch profiles for all listing FIDs at once
-      const fids = Array.from(new Set(lsts.map((l: any) => l.fid)))
-      const profileMap = fids.length > 0 ? await fetchProfilesBatch(fids) : new Map()
+      // Batch fetch profiles for all listing FIDs
+      const fidSet = Array.from(new Set(lsts.map((l: any) => Number(l.fid))))
+      const profileMap = fidSet.length > 0
+        ? await fetchProfilesBatch(fidSet)
+        : new Map()
 
       const items: HistoryItem[] = [
-        ...txs.map(tx => ({ kind: 'tx' as const, data: tx, ts: new Date(tx.created_at).getTime() })),
+        ...txs.map(tx => ({
+          kind: 'tx' as const,
+          data: tx,
+          ts: new Date(tx.created_at).getTime(),
+        })),
         ...lsts.map((l: any) => ({
           kind: 'listing' as const,
-          data: { ...l, profile: profileMap.get(l.fid) ?? null },
+          data: {
+            ...l,
+            profile: (profileMap.get(Number(l.fid)) as FarcasterProfile) ?? null,
+          },
           ts: new Date(l.created_at).getTime(),
         })),
       ]
@@ -111,12 +122,12 @@ export function HomepageClient({ listings: initialListings }: Props) {
       .channel('listings-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'listings' }, () => {
         fetchListings()
-        if (tab === 'history') buildHistory()
+        buildHistory()
       })
       .subscribe()
     const poll = setInterval(fetchListings, 5_000)
     return () => { supabase.removeChannel(channel); clearInterval(poll) }
-  }, [fetchListings, tab, buildHistory])
+  }, [fetchListings, buildHistory])
 
   useEffect(() => {
     const channel = supabase
@@ -138,7 +149,9 @@ export function HomepageClient({ listings: initialListings }: Props) {
     const enriched = new Map<number, BrowseProfile | null>()
     ids.forEach((fid, i) => {
       const p = profileMap.get(fid) ?? null
-      const s = statsResults[i].status === 'fulfilled' ? statsResults[i].value : { followerCount: 0, followingCount: 0 }
+      const s = statsResults[i].status === 'fulfilled'
+        ? statsResults[i].value
+        : { followerCount: 0, followingCount: 0 }
       enriched.set(fid, p ? { ...p, ...s } : null)
     })
     setExploreMap(enriched)
@@ -164,6 +177,7 @@ export function HomepageClient({ listings: initialListings }: Props) {
     return () => clearTimeout(t)
   }, [search])
 
+  // ── Filter + sort ──────────────────────────────────────────────────────────
   const filteredListings = listings
     .filter(l => filter === 'all' || l.listing_type === filter)
     .sort((a, b) => {
@@ -243,7 +257,12 @@ export function HomepageClient({ listings: initialListings }: Props) {
                 { id: 'history'  as Tab, label: 'History' },
               ]).map(t => (
                 <button key={t.id}
-                  onClick={() => { setTab(t.id); setShowSearch(false); setSearch(''); if (t.id === 'history') buildHistory() }}
+                  onClick={() => {
+                    setTab(t.id)
+                    setShowSearch(false)
+                    setSearch('')
+                    if (t.id === 'history') buildHistory()
+                  }}
                   className={cn(
                     'px-4 py-2 rounded-xl text-sm font-medium transition-all duration-150 whitespace-nowrap',
                     tab === t.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -272,7 +291,8 @@ export function HomepageClient({ listings: initialListings }: Props) {
                       </button>
                     ))}
                   </div>
-                  <select value={sortBy} onChange={e => setSortBy(e.target.value as SortType)} className="input w-auto text-xs py-1.5 px-2.5 cursor-pointer">
+                  <select value={sortBy} onChange={e => setSortBy(e.target.value as SortType)}
+                    className="input w-auto text-xs py-1.5 px-2.5 cursor-pointer">
                     <option value="newest">Newest</option>
                     <option value="price_asc">Price: Low</option>
                     <option value="price_desc">Price: High</option>
@@ -294,10 +314,15 @@ export function HomepageClient({ listings: initialListings }: Props) {
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center">
                   {searchLoading
-                    ? <svg className="h-4 w-4 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    : <IconSearch className="h-4 w-4 text-muted-foreground" />}
+                    ? <svg className="h-4 w-4 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg>
+                    : <IconSearch className="h-4 w-4 text-muted-foreground" />
+                  }
                 </div>
-                <input id="search-input" type="text" value={search} onChange={e => setSearch(e.target.value)}
+                <input id="search-input" type="text" value={search}
+                  onChange={e => setSearch(e.target.value)}
                   placeholder="FID number or @username..." className="input pl-10" />
               </div>
               {search.trim() && (
@@ -305,16 +330,21 @@ export function HomepageClient({ listings: initialListings }: Props) {
                   {searchLoading ? (
                     <div className="space-y-2">{[1,2].map(i => <div key={i} className="skeleton h-16 rounded-2xl" />)}</div>
                   ) : searchResults.length === 0 ? (
-                    <div className="card px-5 py-4 text-center"><p className="text-sm text-muted-foreground">No results for "{search}"</p></div>
+                    <div className="card px-5 py-4 text-center">
+                      <p className="text-sm text-muted-foreground">No results for "{search}"</p>
+                    </div>
                   ) : (
                     <div className="card overflow-hidden divide-y divide-border">
                       {searchResults.map(p => (
-                        <Link key={p.fid} href={`/fid/${p.fid}`} onClick={() => { setShowSearch(false); setSearch('') }}
+                        <Link key={p.fid} href={`/fid/${p.fid}`}
+                          onClick={() => { setShowSearch(false); setSearch('') }}
                           className="flex items-center gap-3 px-4 py-3.5 hover:bg-muted/40 transition-colors">
                           <Avatar pfpUrl={p.pfpUrl} displayName={p.displayName} fid={p.fid} size={40} />
                           <div className="min-w-0 flex-1">
                             <p className="font-medium text-sm truncate">{p.displayName || `FID ${p.fid}`}</p>
-                            <p className="text-xs text-muted-foreground">{p.username ? `@${p.username}` : truncateAddress(p.ethAddress || '')}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {p.username ? `@${p.username}` : truncateAddress(p.ethAddress || '')}
+                            </p>
                           </div>
                           <span className="fid-num text-sm shrink-0">#{p.fid}</span>
                         </Link>
@@ -333,7 +363,9 @@ export function HomepageClient({ listings: initialListings }: Props) {
             {exploreLoading ? <GridSkeleton /> : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {exploreFids.map(fid => (
-                  <FidCard key={fid} fid={fid} profile={exploreMap.get(fid) ?? null} listing={listings.find(l => l.fid === fid) ?? null} />
+                  <FidCard key={fid} fid={fid}
+                    profile={exploreMap.get(fid) ?? null}
+                    listing={listings.find(l => l.fid === fid) ?? null} />
                 ))}
               </div>
             )}
@@ -359,12 +391,13 @@ export function HomepageClient({ listings: initialListings }: Props) {
         {tab === 'history' && (
           <div className="pb-10">
             {historyLoading && historyItems.length === 0 ? (
-              <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="skeleton h-14 rounded-2xl" />)}</div>
+              <div className="space-y-2">
+                {[1,2,3,4,5].map(i => <div key={i} className="skeleton h-14 rounded-2xl" />)}
+              </div>
             ) : historyItems.length === 0 ? (
               <Empty title="No history yet" body="Listings, sales, and cancellations appear here." />
             ) : (
               <div className="card overflow-hidden divide-y divide-border">
-                {/* Header */}
                 <div className="hidden sm:grid grid-cols-12 gap-3 px-5 py-2.5 bg-muted/30">
                   <span className="col-span-2 stat-label">Event</span>
                   <span className="col-span-2 stat-label">FID</span>
@@ -372,11 +405,11 @@ export function HomepageClient({ listings: initialListings }: Props) {
                   <span className="col-span-2 stat-label">Amount</span>
                   <span className="col-span-3 stat-label">Time</span>
                 </div>
-                {historyItems.map((item, i) => (
+                {historyItems.map(item =>
                   item.kind === 'tx'
                     ? <TxHistoryRow key={`tx-${item.data.id}`} tx={item.data} myAddress={address ?? ''} />
-                    : <ListingHistoryRow key={`lst-${item.data.id}`} listing={item.data} />
-                ))}
+                    : <ListingHistoryRow key={`lst-${item.data.id}-${item.data.status}`} listing={item.data} />
+                )}
               </div>
             )}
           </div>
@@ -410,7 +443,16 @@ function TxHistoryRow({ tx, myAddress }: { tx: Transaction; myAddress: string })
   )
 }
 
+// Fetch profile lazily if not already loaded
 function ListingHistoryRow({ listing }: { listing: Listing & { profile: FarcasterProfile | null } }) {
+  const [profile, setProfile] = useState<FarcasterProfile | null>(listing.profile)
+
+  useEffect(() => {
+    if (!profile) {
+      fetchProfileByFid(listing.fid).then(p => { if (p) setProfile(p) })
+    }
+  }, [listing.fid]) // eslint-disable-line
+
   const statusColor = {
     active:    'bg-green-500/10 text-green-400',
     sold:      'bg-primary/10 text-primary',
@@ -431,9 +473,9 @@ function ListingHistoryRow({ listing }: { listing: Listing & { profile: Farcaste
       </span>
       <span className="col-span-2 fid-num text-sm">#{listing.fid}</span>
       <div className="col-span-3 flex items-center gap-2 min-w-0">
-        <Avatar pfpUrl={listing.profile?.pfpUrl} displayName={listing.profile?.displayName} fid={listing.fid} size={20} />
+        <Avatar pfpUrl={profile?.pfpUrl} displayName={profile?.displayName} fid={listing.fid} size={20} />
         <span className="text-xs text-muted-foreground truncate">
-          {listing.profile?.username ? `@${listing.profile.username}` : truncateAddress(listing.seller)}
+          {profile?.username ? `@${profile.username}` : truncateAddress(listing.seller)}
         </span>
       </div>
       <span className="col-span-2 font-semibold text-sm">{formatEthDisplay(listing.price)}</span>
@@ -453,11 +495,15 @@ function FidCard({ fid, profile, listing, showPrice }: {
 
   return (
     <Link href={`/fid/${fid}`} className="card-hover group flex flex-col overflow-hidden">
-      {isListed ? <div className="h-0.5 bg-primary/70 rounded-t-2xl" /> : <div className="h-0.5 bg-border rounded-t-2xl" />}
+      {isListed
+        ? <div className="h-0.5 bg-primary/70 rounded-t-2xl" />
+        : <div className="h-0.5 bg-border rounded-t-2xl" />}
       <div className="p-3.5 flex flex-col gap-2 flex-1">
         <div className="flex items-center justify-between">
           <span className="fid-num text-xs">#{fid}</span>
-          {isListed ? <span className="badge-active text-[10px] px-1.5 py-0.5">Sale</span> : <span className="h-1 w-1 rounded-full bg-border" />}
+          {isListed
+            ? <span className="badge-active text-[10px] px-1.5 py-0.5">Sale</span>
+            : <span className="h-1 w-1 rounded-full bg-border" />}
         </div>
         <div className="flex justify-center">
           <Avatar pfpUrl={profile?.pfpUrl} displayName={displayName} fid={fid} size={48}
@@ -476,7 +522,9 @@ function FidCard({ fid, profile, listing, showPrice }: {
                 <span className="font-medium text-foreground">{fmtCount(followers!)}</span> followers
               </span>
             )}
-            {(followers ?? 0) > 0 && (following ?? 0) > 0 && <span className="text-[10px] text-border">·</span>}
+            {(followers ?? 0) > 0 && (following ?? 0) > 0 && (
+              <span className="text-[10px] text-border">·</span>
+            )}
             {(following ?? 0) > 0 && (
               <span className="text-[10px] text-muted-foreground">
                 <span className="font-medium text-foreground">{fmtCount(following!)}</span> following
@@ -485,7 +533,9 @@ function FidCard({ fid, profile, listing, showPrice }: {
           </div>
         )}
         {isListed && listing && (
-          <p className="text-center text-xs font-semibold text-primary mt-auto pt-1">{formatEthDisplay(listing.price)}</p>
+          <p className="text-center text-xs font-semibold text-primary mt-auto pt-1">
+            {formatEthDisplay(listing.price)}
+          </p>
         )}
       </div>
     </Link>
@@ -498,7 +548,9 @@ function fmtCount(n: number): string {
   return n.toString()
 }
 
-function StatCard({ label, value, accent, sub }: { label: string; value: string; accent?: boolean; sub?: string }) {
+function StatCard({ label, value, accent, sub }: {
+  label: string; value: string; accent?: boolean; sub?: string
+}) {
   return (
     <div className={cn('card p-4', accent && 'border-primary/20 bg-primary/5')}>
       <p className="stat-label mb-1.5">{label}</p>
@@ -512,8 +564,10 @@ function Avatar({ pfpUrl, displayName, fid, size = 40, className = '' }: {
   pfpUrl?: string; displayName?: string; fid: number; size?: number; className?: string
 }) {
   return (
-    <img src={pfpUrl || DEFAULT_PFP} alt={displayName || `FID ${fid}`} width={size} height={size}
-      className={cn('rounded-full object-cover shrink-0', className)} style={{ width: size, height: size }}
+    <img src={pfpUrl || DEFAULT_PFP} alt={displayName || `FID ${fid}`}
+      width={size} height={size}
+      className={cn('rounded-full object-cover shrink-0', className)}
+      style={{ width: size, height: size }}
       onError={e => { (e.target as HTMLImageElement).src = DEFAULT_PFP }} />
   )
 }
