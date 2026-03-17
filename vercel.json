@@ -4,13 +4,13 @@
   "devCommand": "next dev",
   "installCommand": "npm install",
   "regions": ["sin1"],
-  "env": [
-    "NEXT_PUBLIC_PRIVY_APP_ID",
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "NEXT_PUBLIC_MARKETPLACE_ADDRESS",
-    "NEXT_PUBLIC_OWNER_ADDRESS",
-    "NEXT_PUBLIC_OPTIMISM_RPC"
-  ]
+  "env": {
+    "NEXT_PUBLIC_PRIVY_APP_ID": "@next_public_privy_app_id",
+    "NEXT_PUBLIC_SUPABASE_URL": "@next_public_supabase_url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@next_public_supabase_anon_key",
+    "SUPABASE_SERVICE_ROLE_KEY": "@supabase_service_role_key",
+    "NEXT_PUBLIC_MARKETPLACE_ADDRESS": "@next_public_marketplace_address",
+    "NEXT_PUBLIC_OWNER_ADDRESS": "@next_public_owner_address",
+    "NEXT_PUBLIC_OPTIMISM_RPC": "@next_public_optimism_rpc"
+  }
 }
